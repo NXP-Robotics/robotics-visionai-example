@@ -1,0 +1,345 @@
+<!--# Copyright 2026 NXP
+
+ NXP Proprietary. This software is owned or controlled by NXP
+ and may only be used strictly in accordance with the applicable license terms.
+ By expressly accepting such terms or by downloading, installing, activating
+ and/or otherwise using the software, you are agreeing that you have read, and
+ that you agree to comply with and are bound by, such license terms.
+ If you do not agree to be bound by the applicable license terms, then you may
+ not retain, install, activate or otherwise use the software.
+-->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>robotics-visionai-example</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 16px; background: #101418; color: #e6e6e6;
+    font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+  }
+  h1 { font-size: 1.1rem; font-weight: 600; margin: 0 0 12px; color: #fff; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+  .card {
+    background: #181c22; border: 1px solid #262b33; border-radius: 10px;
+    padding: 12px 14px;
+  }
+  #video-wrap { position: relative; }
+  #video { width: 100%; display: block; border-radius: 10px; background: #000; }
+  #video-status {
+    position: absolute; top: 10px; left: 10px; padding: 3px 9px;
+    border-radius: 6px; font-size: 0.75rem; background: rgba(0,0,0,0.55);
+  }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 5px;
+    font-size: 0.72rem; font-weight: 600; letter-spacing: 0.03em;
+    background: #2b3444; color: #8ec9ff;
+  }
+  .meta-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; font-size: 0.8rem; color: #9aa4b2; }
+  .stats-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+  .stat { background: #12161b; border-radius: 8px; padding: 8px 10px; text-align: center; }
+  .stat .v { font-size: 1.25rem; font-weight: 700; color: #fff; }
+  .stat .l { font-size: 0.68rem; color: #8892a0; text-transform: uppercase; letter-spacing: 0.04em; }
+  .side h2 { font-size: 0.85rem; margin: 0 0 8px; color: #cfd6e0; }
+  table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+  table td { padding: 3px 4px; border-bottom: 1px solid #232830; }
+  table td.k { color: #8892a0; }
+  table td.v { text-align: right; color: #e6e6e6; font-family: ui-monospace, monospace; }
+  details summary { cursor: pointer; font-size: 0.8rem; color: #8ec9ff; margin-top: 10px; }
+  ul.det-list { list-style: none; margin: 0; padding: 0; font-size: 0.78rem; }
+  ul.det-list li { padding: 4px 0; border-bottom: 1px solid #232830; display: flex; justify-content: space-between; }
+  .empty { color: #666; font-size: 0.78rem; padding: 6px 0; }
+</style>
+</head>
+<body>
+  <h1>robotics-visionai-example &mdash; live viewer</h1>
+  <div class="layout">
+    <div class="card" id="video-wrap">
+      <img id="video" src="/stream" alt="live stream"
+           onerror="this.dataset.broken='1'; setTimeout(()=>{ this.src='/stream?retry=' + Date.now(); }, 1000);"
+           onload="this.dataset.broken='';">
+      <div id="video-status" class="badge">connecting...</div>
+      <div class="meta-row">
+        <span>backend: <b id="m-backend">-</b></span>
+        <span id="camera-label-wrap">camera: <b id="m-camera">-</b></span>
+        <span id="camera-select-wrap" style="display:none">
+          camera:
+          <select id="camera-select" style="background:#1e2530;color:#e6e6e6;border:1px solid #3a4455;border-radius:4px;padding:2px 6px;font-size:0.78rem;cursor:pointer;" title="Switch camera"></select>
+          <span id="camera-switch-status" style="font-size:0.72rem;color:#f0a030;display:none">switching...</span>
+        </span>
+        <span id="model-label-wrap">model: <b id="m-model">-</b></span>
+        <span id="model-select-wrap" style="display:none">
+          model:
+          <select id="model-select" style="background:#1e2530;color:#e6e6e6;border:1px solid #3a4455;border-radius:4px;padding:2px 6px;font-size:0.78rem;cursor:pointer;" title="Switch detection model"></select>
+          <span id="model-switch-status" style="font-size:0.72rem;color:#f0a030;display:none">switching...</span>
+        </span>
+      </div>
+      <div class="stats-grid">
+        <div class="stat"><div class="v" id="s-fps">0.0</div><div class="l">FPS</div></div>
+        <div class="stat"><div class="v" id="s-infer">0.0</div><div class="l">Infer ms</div></div>
+        <div class="stat"><div class="v" id="s-frames">0</div><div class="l">Frames</div></div>
+      </div>
+      <details>
+        <summary>Per-stage timings</summary>
+        <table id="timings-table"><tbody></tbody></table>
+      </details>
+    </div>
+    <div class="card side">
+      <h2>Detections / keypoints</h2>
+      <ul class="det-list" id="det-list"><li class="empty">waiting for data...</li></ul>
+    </div>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+
+function setVideoStatus(ok) {
+  const el = $('video-status');
+  el.textContent = ok ? 'live' : 'reconnecting...';
+  el.style.background = ok ? 'rgba(30,140,60,0.65)' : 'rgba(150,40,40,0.65)';
+}
+
+function renderCamera(s) {
+  const el = $('m-camera');
+  const parts = [];
+  if (s.camera_type) parts.push(s.camera_type);
+  if (s.camera_index !== null && s.camera_index !== undefined) {
+    parts.push('#' + s.camera_index);
+  }
+  el.textContent = parts.length ? parts.join(' ') : (s.camera_id || '-');
+}
+
+function renderTimings(timings) {
+  const tbody = $('timings-table').querySelector('tbody');
+  tbody.innerHTML = '';
+  Object.entries(timings || {}).forEach(([k, v]) => {
+    if (!v) return;  // hide zero-valued rows so one panel fits every backend
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td class="k">${k}</td><td class="v">${v.toFixed(2)} ms</td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function renderDetections(status) {
+  const list = $('det-list');
+  list.innerHTML = '';
+  const dets = status.detections || [];
+  const kpts = (status.keypoints || []).filter(k => k.valid);
+  if (dets.length) {
+    dets.forEach(d => {
+      const li = document.createElement('li');
+      li.innerHTML = `<span>${d.label}</span><span>${(d.score * 100).toFixed(0)}%</span>`;
+      list.appendChild(li);
+    });
+  } else if (kpts.length) {
+    kpts.forEach(k => {
+      const li = document.createElement('li');
+      li.innerHTML = `<span>${k.label}</span><span>${k.x.toFixed(0)}, ${k.y.toFixed(0)}</span>`;
+      list.appendChild(li);
+    });
+  } else {
+    list.innerHTML = '<li class="empty">no detections yet</li>';
+  }
+}
+
+let _availableModels = [];
+let _switchInFlight = false;
+let _availableCameras = [];
+let _cameraSwitchInFlight = false;
+let _optionsLoaded = false;
+
+async function loadOptions() {
+  try {
+    const res = await fetch('/api/options', { cache: 'no-store' });
+    if (!res.ok) return;
+    const opts = await res.json();
+    _optionsLoaded = true;
+    _availableModels = opts.models || [];
+    _availableCameras = opts.detected_cameras || [];
+    fillModelOptions();
+    fillCameraOptions();
+  } catch (_) {}
+}
+
+function fillModelOptions() {
+  const sel = $('model-select');
+  const cur = sel.value;
+  sel.innerHTML = '';
+  _availableModels.forEach(m => {
+    const opt = document.createElement('option');
+    opt.value = m;
+    opt.textContent = m.includes('/') ? m.slice(m.lastIndexOf('/') + 1) : m;
+    sel.appendChild(opt);
+  });
+
+  if (cur && _availableModels.includes(cur)) sel.value = cur;
+}
+
+function fillCameraOptions() {
+  const sel = $('camera-select');
+  const cur = sel.value;
+  sel.innerHTML = '';
+  _availableCameras.forEach(c => {
+    const opt = document.createElement('option');
+    opt.value = c.camera_id;
+    // Sensor type plus the short bus id, e.g. "imx708 (imx708@1a)", so two
+    // cameras of the same type are still distinguishable.
+    opt.textContent = c.label || c.camera_type;
+    sel.appendChild(opt);
+  });
+  if (cur && _availableCameras.some(c => c.camera_id === cur)) sel.value = cur;
+}
+
+async function onCameraChange() {
+  const sel = $('camera-select');
+  const cameraId = sel.value;
+  if (!cameraId || _cameraSwitchInFlight) return;
+  _cameraSwitchInFlight = true;
+  sel.disabled = true;
+  const st = $('camera-switch-status');
+  st.style.display = 'inline';
+  st.textContent = 'switching...';
+  st.style.color = '#f0a030';
+  try {
+    const res = await fetch('/api/camera', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({camera_id: cameraId}),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({detail: res.statusText}));
+      st.textContent = 'error: ' + (err.detail || res.statusText);
+      st.style.color = '#e05050';
+    } else {
+      st.textContent = '';
+      st.style.display = 'none';
+    }
+  } catch (e) {
+    st.textContent = 'error: ' + e.message;
+    st.style.color = '#e05050';
+  } finally {
+    _cameraSwitchInFlight = false;
+    sel.disabled = false;
+  }
+}
+
+function renderCameraSelector(s) {
+  const hasCameras = _availableCameras.length > 0 && !!s.camera_type;
+  $('camera-label-wrap').style.display = hasCameras ? 'none' : '';
+  $('camera-select-wrap').style.display = hasCameras ? '' : 'none';
+  if (!hasCameras) return;
+
+  const sel = $('camera-select');
+  if (s.camera_id && !_cameraSwitchInFlight &&
+      _availableCameras.some(c => c.camera_id === s.camera_id)) {
+    sel.value = s.camera_id;
+  }
+
+  const st = $('camera-switch-status');
+  if (_cameraSwitchInFlight) return;  // local status wins while our POST is open
+  if (s.camera_switch_state === 'switching') {
+    st.style.display = 'inline';
+    st.textContent = 'switching...';
+    st.style.color = '#f0a030';
+  } else if (s.camera_switch_state === 'error' && s.camera_switch_error) {
+    st.style.display = 'inline';
+    st.textContent = 'error: ' + s.camera_switch_error;
+    st.style.color = '#e05050';
+  } else {
+    st.style.display = 'none';
+  }
+}
+
+async function onModelChange() {
+  const sel = $('model-select');
+  const model = sel.value;
+  if (!model || _switchInFlight) return;
+  _switchInFlight = true;
+  sel.disabled = true;
+  const st = $('model-switch-status');
+  st.style.display = 'inline';
+  st.textContent = 'switching...';
+  try {
+    const res = await fetch('/api/model', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({model}),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({detail: res.statusText}));
+      st.textContent = 'error: ' + (err.detail || res.statusText);
+      st.style.color = '#e05050';
+    } else {
+      st.textContent = '';
+      st.style.display = 'none';
+      st.style.color = '#f0a030';
+    }
+  } catch (e) {
+    st.textContent = 'error: ' + e.message;
+    st.style.color = '#e05050';
+  } finally {
+    _switchInFlight = false;
+    sel.disabled = false;
+  }
+}
+
+async function poll() {
+  try {
+    const res = await fetch('/status', { cache: 'no-store' });
+    if (!res.ok) throw new Error(res.status);
+    const s = await res.json();
+    setVideoStatus(true);
+    $('m-backend').textContent = s.backend || '-';
+    renderCamera(s);
+    if (!_optionsLoaded) loadOptions();
+    renderCameraSelector(s);
+
+    const model = s.model || s.ara_model;
+    const canSwitch = (_availableModels.length > 0 && model);
+    $('model-label-wrap').style.display = canSwitch ? 'none' : '';
+    $('model-select-wrap').style.display = canSwitch ? '' : 'none';
+    $('m-model').textContent = model || '-';
+
+    if (canSwitch) {
+      const sel = $('model-select');
+      if (_availableModels.includes(model) && !_switchInFlight) {
+        sel.value = model;
+      }
+
+      const st = $('model-switch-status');
+      if (s.switch_state === 'switching' && !_switchInFlight) {
+        st.style.display = 'inline';
+        st.textContent = 'switching...';
+        st.style.color = '#f0a030';
+      } else if (s.switch_state === 'error' && s.switch_error && !_switchInFlight) {
+        st.style.display = 'inline';
+        st.textContent = 'error: ' + s.switch_error;
+        st.style.color = '#e05050';
+      } else if (!_switchInFlight) {
+        st.style.display = 'none';
+      }
+    }
+
+    $('s-fps').textContent = s.fps.toFixed(1);
+    $('s-infer').textContent = s.invoke_ms.toFixed(1);
+    $('s-frames').textContent = s.frame_count;
+    renderTimings(s.timings);
+    renderDetections(s);
+  } catch (e) {
+    setVideoStatus(false);
+  }
+}
+
+$('model-select').addEventListener('change', onModelChange);
+$('camera-select').addEventListener('change', onCameraChange);
+
+loadOptions();
+poll();
+setInterval(poll, 500);
+</script>
+</body>
+</html>

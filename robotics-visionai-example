@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Copyright 2026 NXP
+#
+# NXP Proprietary. This software is owned or controlled by NXP
+# and may only be used strictly in accordance with the applicable license terms.
+# By expressly accepting such terms or by downloading, installing, activating
+# and/or otherwise using the software, you are agreeing that you have read, and
+# that you agree to comply with and are bound by, such license terms.
+# If you do not agree to be bound by the applicable license terms, then you may
+# not retain, install, activate or otherwise use the software.
+#
+
+set -euo pipefail
+
+APP_DIR="${RVE_APP_DIR:-/usr/share/robotics-visionai-example}"
+VENV="${APP_DIR}/venv"
+PROG="robotics-visionai-example"
+
+
+# Create the venv on first use. Testing for the console script (not just the
+# directory) also repairs a half-built venv left behind by an install that
+# was interrupted.
+if [ ! -x "${VENV}/bin/${PROG}" ]; then
+    if [ ! -x "${APP_DIR}/install.sh" ]; then
+        echo "${PROG}: ${APP_DIR}/install.sh is missing; the package looks" >&2
+        echo "${PROG}: incomplete. Reinstall robotics-visionai-example." >&2
+        exit 1
+    fi
+
+    # The venv lives under /usr/share, so building it needs root.
+    #
+    # When not running as root we deliberately print the command
+    if [ "$(id -u)" -ne 0 ]; then
+        echo "${PROG}: not set up yet -- the Python environment must be" >&2
+        echo "${PROG}: created once before first use. Run:" >&2
+        echo "" >&2
+        echo "    sudo ${APP_DIR}/install.sh" >&2
+        echo "" >&2
+        echo "${PROG}: this downloads the dependencies from PyPI, so the" >&2
+        echo "${PROG}: board needs network access for that one step." >&2
+        echo "${PROG}: See ${APP_DIR}/README.md" >&2
+        exit 1
+    fi
+
+    echo "${PROG}: first run -- setting up the Python environment." >&2
+    "${APP_DIR}/install.sh" || {
+        echo "${PROG}: environment setup failed (see output above)." >&2
+        exit 1
+    }
+fi
+
+exec "${VENV}/bin/${PROG}" "$@"
